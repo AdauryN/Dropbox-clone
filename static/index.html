@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Storage</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <!-- ── Login Screen ── -->
+    <div id="login-section">
+        <h1>Cloud Storage</h1>
+        <button id="login-btn">Sign in with Google</button>
+    </div>
+
+    <!-- ── App (shown after login) ── -->
+    <div id="app-section" hidden>
+        <header>
+            <h2>Cloud Storage</h2>
+            <div class="user-info">
+                <span id="user-email"></span>
+                <button id="logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <main>
+            <div id="message" class="message" hidden></div>
+
+            <div class="path-bar">
+                <strong>Location:</strong> <span id="current-path">/</span>
+            </div>
+
+            <div class="create-form">
+                <input type="text" id="new-dir-name" placeholder="New directory name" maxlength="100">
+                <button id="create-btn">Create Directory</button>
+            </div>
+
+            <div id="directory-list" class="dir-list"></div>
+        </main>
+    </div>
+
+    <!-- Firebase SDKs (compat v9) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+    <script src="/static/firebase-login.js"></script>
+
+    <script>
+    // ── State ──────────────────────────────────────────────────────────────
+    let currentUser = null;
+    const currentPath = '/';   // navigation added in Group 2
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const loginSection  = document.getElementById('login-section');
+    const appSection    = document.getElementById('app-section');
+    const userEmailEl   = document.getElementById('user-email');
+    const currentPathEl = document.getElementById('current-path');
+    const dirListEl     = document.getElementById('directory-list');
+    const msgEl         = document.getElementById('message');
+    const newDirInput   = document.getElementById('new-dir-name');
+
+    // ── Auth ───────────────────────────────────────────────────────────────
+    firebase.auth().onAuthStateChanged(async user => {
+        if (user) {
+            currentUser = user;
+            userEmailEl.textContent = user.email;
+            loginSection.hidden = true;
+            appSection.hidden = false;
+            await notifyBackendLogin();
+            loadDirectories();
+        } else {
+            currentUser = null;
+            loginSection.hidden = false;
+            appSection.hidden = true;
+        }
+    });
+
+    document.getElementById('login-btn').addEventListener('click', () => {
+        firebase.auth()
+            .signInWithPopup(new firebase.auth.GoogleAuthProvider())
+            .catch(err => showMsg(err.message, 'error'));
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        firebase.auth().signOut();
+    });
+
+    // ── API helper ─────────────────────────────────────────────────────────
+    async function apiFetch(path, options = {}) {
+        const token = await currentUser.getIdToken();
+        const headers = { 'Authorization': `Bearer ${token}` };
+        if (options.body) headers['Content-Type'] = 'application/json';
+        const res = await fetch(path, { ...options, headers });
+        const data = await res.json();
+        return { ok: res.ok, data };
+    }
+
+    // ── Login notification ─────────────────────────────────────────────────
+    async function notifyBackendLogin() {
+        await apiFetch('/api/login', {
+            method: 'POST',
+            body: JSON.stringify({ email: currentUser.email }),
+        });
+    }
+
+    // ── Directory listing ──────────────────────────────────────────────────
+    async function loadDirectories() {
+        currentPathEl.textContent = currentPath;
+        const { ok, data } = await apiFetch(
+            `/api/directories?path=${encodeURIComponent(currentPath)}`
+        );
+        if (!ok) { showMsg('Failed to load directories', 'error'); return; }
+        renderDirectories(data);
+    }
+
+    function renderDirectories(dirs) {
+        dirListEl.innerHTML = '';
+
+        if (dirs.length === 0) {
+            const p = document.createElement('p');
+            p.className = 'empty-msg';
+            p.textContent = 'No directories yet. Create one above.';
+            dirListEl.appendChild(p);
+            return;
+        }
+
+        dirs.forEach(dir => {
+            const row = document.createElement('div');
+            row.className = 'dir-row';
+
+            const icon = document.createElement('span');
+            icon.className = 'dir-icon';
+            icon.textContent = '[DIR]';
+
+            const name = document.createElement('span');
+            name.className = 'dir-name';
+            name.textContent = dir.name;   // textContent prevents XSS
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'delete-btn';
+            delBtn.textContent = 'Delete';
+            delBtn.addEventListener('click', () => deleteDirectory(dir.id, dir.name));
+
+            row.appendChild(icon);
+            row.appendChild(name);
+            row.appendChild(delBtn);
+            dirListEl.appendChild(row);
+        });
+    }
+
+    // ── Create directory ───────────────────────────────────────────────────
+    document.getElementById('create-btn').addEventListener('click', createDirectory);
+    newDirInput.addEventListener('keydown', e => { if (e.key === 'Enter') createDirectory(); });
+
+    async function createDirectory() {
+        const name = newDirInput.value.trim();
+        if (!name) { showMsg('Enter a directory name', 'error'); return; }
+
+        const { ok, data } = await apiFetch('/api/directories', {
+            method: 'POST',
+            body: JSON.stringify({ name, parent_path: currentPath }),
+        });
+
+        if (ok) {
+            newDirInput.value = '';
+            showMsg(`Directory "${name}" created`, 'success');
+            loadDirectories();
+        } else {
+            showMsg(data.error || 'Failed to create directory', 'error');
+        }
+    }
+
+    // ── Delete directory ───────────────────────────────────────────────────
+    async function deleteDirectory(dirId, dirName) {
+        if (!confirm(`Delete directory "${dirName}"?\nThis cannot be undone.`)) return;
+
+        const { ok, data } = await apiFetch(`/api/directories/${dirId}`, {
+            method: 'DELETE',
+        });
+
+        if (ok) {
+            showMsg(`Directory "${dirName}" deleted`, 'success');
+            loadDirectories();
+        } else {
+            showMsg(data.error || 'Failed to delete directory', 'error');
+        }
+    }
+
+    // ── Message helper ─────────────────────────────────────────────────────
+    function showMsg(text, type) {
+        msgEl.textContent = text;
+        msgEl.className = `message ${type}`;
+        msgEl.hidden = false;
+        clearTimeout(msgEl._timer);
+        msgEl._timer = setTimeout(() => { msgEl.hidden = true; }, 4000);
+    }
+    </script>
+</body>
+</html>
