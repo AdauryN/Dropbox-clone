@@ -4,6 +4,9 @@
     padding: 0;
 }
 
+/* Ensure hidden attribute always wins over display rules */
+[hidden] { display: none !important; }
+
 body {
     font-family: system-ui, -apple-system, sans-serif;
     background: #f5f5f5;
@@ -86,20 +89,29 @@ main {
     font-size: 0.95rem;
 }
 
-/* ── Create directory form ── */
-.create-form {
+/* ── Action forms (create dir + upload) ── */
+.action-forms {
     display: flex;
+    flex-direction: column;
     gap: 0.5rem;
     margin-bottom: 1rem;
 }
 
-.create-form input {
+.create-form,
+.upload-form {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.create-form input,
+.upload-form input[type="file"] {
     flex: 1;
     padding: 0.6rem 0.75rem;
     border: 1px solid #ddd;
     border-radius: 4px;
     font-size: 1rem;
     outline: none;
+    background: white;
 }
 
 .create-form input:focus {
@@ -141,6 +153,21 @@ main {
 .dir-name {
     flex: 1;
     font-size: 1rem;
+}
+
+.clickable {
+    cursor: pointer;
+    color: #1a73e8;
+}
+
+.clickable:hover {
+    text-decoration: underline;
+}
+
+.file-size {
+    font-size: 0.8rem;
+    color: #888;
+    white-space: nowrap;
 }
 
 .empty-msg {
@@ -185,13 +212,15 @@ button:disabled {
     background: rgba(255, 255, 255, 0.3);
 }
 
-#create-btn {
+#create-btn,
+#upload-btn {
     background: #1a73e8;
     color: white;
     white-space: nowrap;
 }
 
-#create-btn:hover {
+#create-btn:hover,
+#upload-btn:hover {
     background: #1558b0;
 }
 

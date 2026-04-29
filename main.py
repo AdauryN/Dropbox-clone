@@ -4,6 +4,7 @@ import os
 from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, auth, firestore as fs
+from google.cloud import storage as gcs
 
 # local-constants.py uses a hyphen so standard import won't work
 _spec = importlib.util.spec_from_file_location(
@@ -20,6 +21,8 @@ firebase_admin.initialize_app(
     {"projectId": local_constants.PROJECT_ID},
 )
 db = fs.client()
+storage_client = gcs.Client(project=local_constants.PROJECT_ID)
+bucket = storage_client.bucket(local_constants.STORAGE_BUCKET)
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +179,91 @@ def delete_directory(dir_id):
 
     dir_ref.delete()
     return jsonify({"status": "deleted"})
+
+
+# ---------------------------------------------------------------------------
+# Files
+# ---------------------------------------------------------------------------
+
+@app.route("/api/files", methods=["GET"])
+def list_files():
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    directory_path = request.args.get("path", "/")
+    docs = (
+        db.collection("files")
+        .where("owner", "==", uid)
+        .where("directory_path", "==", directory_path)
+        .stream()
+    )
+    return jsonify([
+        {"id": d.id, "name": d.to_dict()["name"], "size": d.to_dict().get("size", 0)}
+        for d in docs
+    ])
+
+
+@app.route("/api/files", methods=["POST"])
+def upload_file():
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    uploaded = request.files["file"]
+    directory_path = request.form.get("directory_path", "/")
+    overwrite = request.form.get("overwrite", "false").lower() == "true"
+    filename = uploaded.filename
+
+    if not filename:
+        return jsonify({"error": "Filename is missing"}), 400
+
+    # Check if a file with this name already exists in the directory
+    existing = (
+        db.collection("files")
+        .where("owner", "==", uid)
+        .where("directory_path", "==", directory_path)
+        .where("name", "==", filename)
+        .limit(1)
+        .get()
+    )
+
+    # Critical rule: ask before overwriting
+    if existing and not overwrite:
+        return jsonify({"error": "File already exists", "exists": True}), 409
+
+    # Build GCS object path: uid/path/to/dir/filename
+    dir_suffix = directory_path.strip("/")
+    gcs_path = f"{uid}/{dir_suffix}/{filename}" if dir_suffix else f"{uid}/{filename}"
+
+    file_data = uploaded.read()
+    size = len(file_data)
+    blob = bucket.blob(gcs_path)
+    blob.upload_from_string(
+        file_data,
+        content_type=uploaded.content_type or "application/octet-stream",
+    )
+
+    if existing and overwrite:
+        existing[0].reference.update({
+            "gcs_path": gcs_path,
+            "size": size,
+            "updated_at": fs.SERVER_TIMESTAMP,
+        })
+    else:
+        db.collection("files").add({
+            "name": filename,
+            "owner": uid,
+            "directory_path": directory_path,
+            "gcs_path": gcs_path,
+            "size": size,
+            "created_at": fs.SERVER_TIMESTAMP,
+        })
+
+    return jsonify({"status": "uploaded"}), 201
 
 
 if __name__ == "__main__":

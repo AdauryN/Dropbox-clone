@@ -31,12 +31,18 @@
                 <strong>Location:</strong> <span id="current-path">/</span>
             </div>
 
-            <div class="create-form">
-                <input type="text" id="new-dir-name" placeholder="New directory name" maxlength="100">
-                <button id="create-btn">Create Directory</button>
+            <div class="action-forms">
+                <div class="create-form">
+                    <input type="text" id="new-dir-name" placeholder="New directory name" maxlength="100">
+                    <button id="create-btn">Create Directory</button>
+                </div>
+                <div class="upload-form">
+                    <input type="file" id="file-input">
+                    <button id="upload-btn">Upload File</button>
+                </div>
             </div>
 
-            <div id="directory-list" class="dir-list"></div>
+            <div id="contents-list" class="dir-list"></div>
         </main>
     </div>
 
@@ -48,14 +54,14 @@
     <script>
     // ── State ──────────────────────────────────────────────────────────────
     let currentUser = null;
-    const currentPath = '/';   // navigation added in Group 2
+    let currentPath = '/';
 
     // ── DOM refs ───────────────────────────────────────────────────────────
     const loginSection  = document.getElementById('login-section');
     const appSection    = document.getElementById('app-section');
     const userEmailEl   = document.getElementById('user-email');
     const currentPathEl = document.getElementById('current-path');
-    const dirListEl     = document.getElementById('directory-list');
+    const contentsEl    = document.getElementById('contents-list');
     const msgEl         = document.getElementById('message');
     const newDirInput   = document.getElementById('new-dir-name');
 
@@ -67,7 +73,7 @@
             loginSection.hidden = true;
             appSection.hidden = false;
             await notifyBackendLogin();
-            loadDirectories();
+            loadContent();
         } else {
             currentUser = null;
             loginSection.hidden = false;
@@ -85,14 +91,14 @@
         firebase.auth().signOut();
     });
 
-    // ── API helper ─────────────────────────────────────────────────────────
+    // ── API helper (JSON requests) ─────────────────────────────────────────
     async function apiFetch(path, options = {}) {
         const token = await currentUser.getIdToken();
         const headers = { 'Authorization': `Bearer ${token}` };
         if (options.body) headers['Content-Type'] = 'application/json';
         const res = await fetch(path, { ...options, headers });
         const data = await res.json();
-        return { ok: res.ok, data };
+        return { ok: res.ok, status: res.status, data };
     }
 
     // ── Login notification ─────────────────────────────────────────────────
@@ -103,27 +109,58 @@
         });
     }
 
-    // ── Directory listing ──────────────────────────────────────────────────
-    async function loadDirectories() {
-        currentPathEl.textContent = currentPath;
-        const { ok, data } = await apiFetch(
-            `/api/directories?path=${encodeURIComponent(currentPath)}`
-        );
-        if (!ok) { showMsg('Failed to load directories', 'error'); return; }
-        renderDirectories(data);
+    // ── Navigation (Tasks 5, 6, 7) ─────────────────────────────────────────
+    function navigateTo(path) {
+        currentPath = path;
+        loadContent();
     }
 
-    function renderDirectories(dirs) {
-        dirListEl.innerHTML = '';
+    function navigateUp() {
+        if (currentPath === '/') return;
+        const parts = currentPath.split('/').filter(p => p);
+        parts.pop();
+        currentPath = parts.length === 0 ? '/' : '/' + parts.join('/');
+        loadContent();
+    }
 
-        if (dirs.length === 0) {
-            const p = document.createElement('p');
-            p.className = 'empty-msg';
-            p.textContent = 'No directories yet. Create one above.';
-            dirListEl.appendChild(p);
+    // ── Load directories + files in parallel ──────────────────────────────
+    async function loadContent() {
+        currentPathEl.textContent = currentPath;
+        const encoded = encodeURIComponent(currentPath);
+        const [dirsRes, filesRes] = await Promise.all([
+            apiFetch(`/api/directories?path=${encoded}`),
+            apiFetch(`/api/files?path=${encoded}`),
+        ]);
+        if (!dirsRes.ok || !filesRes.ok) {
+            showMsg('Failed to load contents', 'error');
             return;
         }
+        renderContent(dirsRes.data, filesRes.data);
+    }
 
+    function renderContent(dirs, files) {
+        contentsEl.innerHTML = '';
+
+        // Task 6 & 7: show ../ only when not at root
+        if (currentPath !== '/') {
+            const row = document.createElement('div');
+            row.className = 'dir-row clickable';
+
+            const icon = document.createElement('span');
+            icon.className = 'dir-icon';
+            icon.textContent = '[DIR]';
+
+            const name = document.createElement('span');
+            name.className = 'dir-name';
+            name.textContent = '../';
+
+            row.appendChild(icon);
+            row.appendChild(name);
+            row.addEventListener('click', navigateUp);
+            contentsEl.appendChild(row);
+        }
+
+        // Directories — name is clickable to navigate in (Task 5)
         dirs.forEach(dir => {
             const row = document.createElement('div');
             row.className = 'dir-row';
@@ -133,8 +170,9 @@
             icon.textContent = '[DIR]';
 
             const name = document.createElement('span');
-            name.className = 'dir-name';
-            name.textContent = dir.name;   // textContent prevents XSS
+            name.className = 'dir-name clickable';
+            name.textContent = dir.name;
+            name.addEventListener('click', () => navigateTo(dir.path));
 
             const delBtn = document.createElement('button');
             delBtn.className = 'delete-btn';
@@ -144,8 +182,39 @@
             row.appendChild(icon);
             row.appendChild(name);
             row.appendChild(delBtn);
-            dirListEl.appendChild(row);
+            contentsEl.appendChild(row);
         });
+
+        // Files
+        files.forEach(file => {
+            const row = document.createElement('div');
+            row.className = 'dir-row';
+
+            const icon = document.createElement('span');
+            icon.className = 'dir-icon';
+            icon.textContent = '[FILE]';
+
+            const name = document.createElement('span');
+            name.className = 'dir-name';
+            name.textContent = file.name;
+
+            const size = document.createElement('span');
+            size.className = 'file-size';
+            size.textContent = formatSize(file.size);
+
+            row.appendChild(icon);
+            row.appendChild(name);
+            row.appendChild(size);
+            contentsEl.appendChild(row);
+        });
+
+        // Empty state
+        if (dirs.length === 0 && files.length === 0) {
+            const p = document.createElement('p');
+            p.className = 'empty-msg';
+            p.textContent = currentPath === '/' ? 'No files or directories yet.' : 'This directory is empty.';
+            contentsEl.appendChild(p);
+        }
     }
 
     // ── Create directory ───────────────────────────────────────────────────
@@ -164,7 +233,7 @@
         if (ok) {
             newDirInput.value = '';
             showMsg(`Directory "${name}" created`, 'success');
-            loadDirectories();
+            loadContent();
         } else {
             showMsg(data.error || 'Failed to create directory', 'error');
         }
@@ -180,13 +249,56 @@
 
         if (ok) {
             showMsg(`Directory "${dirName}" deleted`, 'success');
-            loadDirectories();
+            loadContent();
         } else {
             showMsg(data.error || 'Failed to delete directory', 'error');
         }
     }
 
-    // ── Message helper ─────────────────────────────────────────────────────
+    // ── Upload file (Task 8) ───────────────────────────────────────────────
+    document.getElementById('upload-btn').addEventListener('click', () => {
+        const file = document.getElementById('file-input').files[0];
+        if (!file) { showMsg('Select a file first', 'error'); return; }
+        doUpload(file, false);
+    });
+
+    async function doUpload(file, overwrite) {
+        const token = await currentUser.getIdToken();
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('directory_path', currentPath);
+        if (overwrite) formData.append('overwrite', 'true');
+
+        // Do NOT set Content-Type manually — browser sets multipart boundary automatically
+        const res = await fetch('/api/files', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData,
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            document.getElementById('file-input').value = '';
+            showMsg(`"${file.name}" uploaded successfully`, 'success');
+            loadContent();
+        } else if (res.status === 409 && data.exists) {
+            // Critical rule: confirm before overwriting
+            if (confirm(`"${file.name}" already exists here. Overwrite it?`)) {
+                doUpload(file, true);
+            }
+        } else {
+            showMsg(data.error || 'Upload failed', 'error');
+        }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function formatSize(bytes) {
+        if (!bytes) return '';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
     function showMsg(text, type) {
         msgEl.textContent = text;
         msgEl.className = `message ${type}`;
