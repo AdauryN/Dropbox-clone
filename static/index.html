@@ -202,9 +202,21 @@
             size.className = 'file-size';
             size.textContent = formatSize(file.size);
 
+            const dlBtn = document.createElement('button');
+            dlBtn.className = 'download-btn';
+            dlBtn.textContent = 'Download';
+            dlBtn.addEventListener('click', () => downloadFile(file.id, file.name));
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'delete-btn';
+            delBtn.textContent = 'Delete';
+            delBtn.addEventListener('click', () => deleteFile(file.id, file.name));
+
             row.appendChild(icon);
             row.appendChild(name);
             row.appendChild(size);
+            row.appendChild(dlBtn);
+            row.appendChild(delBtn);
             contentsEl.appendChild(row);
         });
 
@@ -289,6 +301,45 @@
         } else {
             showMsg(data.error || 'Upload failed', 'error');
         }
+    }
+
+    // ── Delete file ───────────────────────────────────────────────────────
+    async function deleteFile(fileId, fileName) {
+        if (!confirm(`Delete "${fileName}"?\nThis cannot be undone.`)) return;
+
+        const { ok, data } = await apiFetch(`/api/files/${fileId}`, {
+            method: 'DELETE',
+        });
+
+        if (ok) {
+            showMsg(`"${fileName}" deleted`, 'success');
+            loadContent();
+        } else {
+            showMsg(data.error || 'Failed to delete file', 'error');
+        }
+    }
+
+    // ── Download file ──────────────────────────────────────────────────────
+    async function downloadFile(fileId, fileName) {
+        const token = await currentUser.getIdToken();
+        const res = await fetch(`/api/files/${fileId}/download`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            showMsg(data.error || 'Download failed', 'error');
+            return;
+        }
+
+        // Create a temporary link to trigger the browser's file download
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

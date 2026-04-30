@@ -224,6 +224,17 @@ button:disabled {
     background: #1558b0;
 }
 
+.download-btn {
+    background: #28a745;
+    color: white;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.download-btn:hover {
+    background: #1e7e34;
+}
+
 .delete-btn {
     background: #dc3545;
     color: white;

@@ -1,7 +1,8 @@
 import importlib.util
 import os
 
-from flask import Flask, request, jsonify
+import io
+from flask import Flask, request, jsonify, send_file
 import firebase_admin
 from firebase_admin import credentials, auth, firestore as fs
 from google.cloud import storage as gcs
@@ -264,6 +265,52 @@ def upload_file():
         })
 
     return jsonify({"status": "uploaded"}), 201
+
+
+@app.route("/api/files/<file_id>", methods=["DELETE"])
+def delete_file(file_id):
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    file_ref = db.collection("files").document(file_id)
+    file_doc = file_ref.get()
+
+    if not file_doc.exists:
+        return jsonify({"error": "File not found"}), 404
+
+    file_data = file_doc.to_dict()
+    if file_data["owner"] != uid:
+        return jsonify({"error": "Forbidden"}), 403
+
+    # Delete from GCS then Firestore
+    bucket.blob(file_data["gcs_path"]).delete()
+    file_ref.delete()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/files/<file_id>/download", methods=["GET"])
+def download_file(file_id):
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    file_ref = db.collection("files").document(file_id)
+    file_doc = file_ref.get()
+
+    if not file_doc.exists:
+        return jsonify({"error": "File not found"}), 404
+
+    file_data = file_doc.to_dict()
+    if file_data["owner"] != uid:
+        return jsonify({"error": "Forbidden"}), 403
+
+    file_bytes = bucket.blob(file_data["gcs_path"]).download_as_bytes()
+    return send_file(
+        io.BytesIO(file_bytes),
+        download_name=file_data["name"],
+        as_attachment=True,
+    )
 
 
 if __name__ == "__main__":
