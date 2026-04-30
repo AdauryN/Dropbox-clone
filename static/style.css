@@ -14,7 +14,7 @@ body {
     min-height: 100vh;
 }
 
-/* ── Login screen ── */
+/* Login screen */
 #login-section {
     display: flex;
     flex-direction: column;
@@ -29,7 +29,7 @@ body {
     color: #1a73e8;
 }
 
-/* ── Header ── */
+/* Header */
 header {
     display: flex;
     justify-content: space-between;
@@ -51,14 +51,14 @@ header h2 {
     font-size: 0.9rem;
 }
 
-/* ── Main content ── */
+/* Main content */
 main {
     max-width: 800px;
     margin: 2rem auto;
     padding: 0 1rem;
 }
 
-/* ── Messages ── */
+/* Messages */
 .message {
     padding: 0.75rem 1rem;
     border-radius: 4px;
@@ -78,7 +78,7 @@ main {
     border: 1px solid #f5c6cb;
 }
 
-/* ── Path bar ── */
+/* Path bar */
 .path-bar {
     padding: 0.65rem 1rem;
     background: white;
@@ -89,7 +89,7 @@ main {
     font-size: 0.95rem;
 }
 
-/* ── Action forms (create dir + upload) ── */
+/* Action forms (create dir + upload) */
 .action-forms {
     display: flex;
     flex-direction: column;
@@ -119,7 +119,7 @@ main {
     box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
 }
 
-/* ── Directory list ── */
+/* Directory list */
 .dir-list {
     background: white;
     border: 1px solid #ddd;
@@ -244,4 +244,22 @@ button:disabled {
 
 .delete-btn:hover {
     background: #b02a37;
+}
+
+.share-btn {
+    background: #17a2b8;
+    color: white;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.share-btn:hover {
+    background: #117a8b;
+}
+
+.shared-heading {
+    font-size: 1rem;
+    color: #555;
+    margin: 2rem 0 0.75rem;
+    font-weight: 600;
 }

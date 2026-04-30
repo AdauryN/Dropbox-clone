@@ -43,6 +43,11 @@
             </div>
 
             <div id="contents-list" class="dir-list"></div>
+
+            <div id="shared-section" hidden>
+                <h3 class="shared-heading">Shared with me</h3>
+                <div id="shared-list" class="dir-list"></div>
+            </div>
         </main>
     </div>
 
@@ -74,6 +79,7 @@
             appSection.hidden = false;
             await notifyBackendLogin();
             loadContent();
+            loadSharedFiles();
         } else {
             currentUser = null;
             loginSection.hidden = false;
@@ -207,6 +213,11 @@
             dlBtn.textContent = 'Download';
             dlBtn.addEventListener('click', () => downloadFile(file.id, file.name));
 
+            const shareBtn = document.createElement('button');
+            shareBtn.className = 'share-btn';
+            shareBtn.textContent = 'Share';
+            shareBtn.addEventListener('click', () => shareFile(file.id, file.name));
+
             const delBtn = document.createElement('button');
             delBtn.className = 'delete-btn';
             delBtn.textContent = 'Delete';
@@ -216,6 +227,7 @@
             row.appendChild(name);
             row.appendChild(size);
             row.appendChild(dlBtn);
+            row.appendChild(shareBtn);
             row.appendChild(delBtn);
             contentsEl.appendChild(row);
         });
@@ -274,12 +286,13 @@
         doUpload(file, false);
     });
 
-    async function doUpload(file, overwrite) {
+    async function doUpload(file, overwrite, duplicateConfirmed = false) {
         const token = await currentUser.getIdToken();
         const formData = new FormData();
         formData.append('file', file);
         formData.append('directory_path', currentPath);
         if (overwrite) formData.append('overwrite', 'true');
+        if (duplicateConfirmed) formData.append('duplicate_confirmed', 'true');
 
         // Do NOT set Content-Type manually — browser sets multipart boundary automatically
         const res = await fetch('/api/files', {
@@ -296,7 +309,14 @@
         } else if (res.status === 409 && data.exists) {
             // Critical rule: confirm before overwriting
             if (confirm(`"${file.name}" already exists here. Overwrite it?`)) {
-                doUpload(file, true);
+                doUpload(file, true, duplicateConfirmed);
+            }
+        } else if (res.status === 409 && data.duplicate) {
+            const loc = data.existing_path === '/'
+                ? `/${data.existing_name}`
+                : `${data.existing_path}/${data.existing_name}`;
+            if (confirm(`"${file.name}" is identical to an existing file at ${loc}.\nUpload anyway?`)) {
+                doUpload(file, overwrite, true);
             }
         } else {
             showMsg(data.error || 'Upload failed', 'error');
@@ -340,6 +360,71 @@
         a.download = fileName;
         a.click();
         URL.revokeObjectURL(url);
+    }
+
+    // ── Share file ─────────────────────────────────────────────────────────
+    async function shareFile(fileId, fileName) {
+        const email = prompt(`Share "${fileName}" with (enter their email):`);
+        if (!email) return;
+
+        const { ok, data } = await apiFetch(`/api/files/${fileId}/share`, {
+            method: 'POST',
+            body: JSON.stringify({ email }),
+        });
+
+        if (ok) {
+            showMsg(`"${fileName}" shared with ${email}`, 'success');
+        } else {
+            showMsg(data.error || 'Failed to share file', 'error');
+        }
+    }
+
+    // ── Shared with me ─────────────────────────────────────────────────────
+    async function loadSharedFiles() {
+        const { ok, data } = await apiFetch('/api/shared');
+        const sharedSection = document.getElementById('shared-section');
+        const sharedList = document.getElementById('shared-list');
+
+        if (!ok || data.length === 0) {
+            sharedSection.hidden = true;
+            return;
+        }
+
+        sharedSection.hidden = false;
+        sharedList.innerHTML = '';
+
+        data.forEach(file => {
+            const row = document.createElement('div');
+            row.className = 'dir-row';
+
+            const icon = document.createElement('span');
+            icon.className = 'dir-icon';
+            icon.textContent = '[FILE]';
+
+            const name = document.createElement('span');
+            name.className = 'dir-name';
+            name.textContent = file.name;
+
+            const loc = document.createElement('span');
+            loc.className = 'file-size';
+            loc.textContent = file.directory_path;
+
+            const size = document.createElement('span');
+            size.className = 'file-size';
+            size.textContent = formatSize(file.size);
+
+            const dlBtn = document.createElement('button');
+            dlBtn.className = 'download-btn';
+            dlBtn.textContent = 'Download';
+            dlBtn.addEventListener('click', () => downloadFile(file.id, file.name));
+
+            row.appendChild(icon);
+            row.appendChild(name);
+            row.appendChild(loc);
+            row.appendChild(size);
+            row.appendChild(dlBtn);
+            sharedList.appendChild(row);
+        });
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

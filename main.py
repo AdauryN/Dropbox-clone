@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import os
 
@@ -6,6 +7,7 @@ from flask import Flask, request, jsonify, send_file
 import firebase_admin
 from firebase_admin import credentials, auth, firestore as fs
 from google.cloud import storage as gcs
+from google.cloud.firestore import ArrayUnion
 
 # local-constants.py uses a hyphen so standard import won't work
 _spec = importlib.util.spec_from_file_location(
@@ -25,10 +27,7 @@ db = fs.client()
 storage_client = gcs.Client(project=local_constants.PROJECT_ID)
 bucket = storage_client.bucket(local_constants.STORAGE_BUCKET)
 
-
-# ---------------------------------------------------------------------------
 # Auth helper
-# ---------------------------------------------------------------------------
 
 def _require_uid():
     """Verify the Bearer token and return (uid, None) or (None, error response)."""
@@ -42,18 +41,14 @@ def _require_uid():
         return None, (jsonify({"error": "Invalid token"}), 401)
 
 
-# ---------------------------------------------------------------------------
 # Static entry point
-# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
 
 
-# ---------------------------------------------------------------------------
 # Login — creates User doc + root directory on first sign-in
-# ---------------------------------------------------------------------------
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -82,9 +77,7 @@ def login():
     return jsonify({"status": "ok"})
 
 
-# ---------------------------------------------------------------------------
 # Directories
-# ---------------------------------------------------------------------------
 
 @app.route("/api/directories", methods=["GET"])
 def list_directories():
@@ -118,7 +111,7 @@ def create_directory():
     if not name:
         return jsonify({"error": "Directory name is required"}), 400
 
-    # Critical rule: no duplicate names in the same location
+    # no duplicate names in the same location
     dupe = (
         db.collection("directories")
         .where("owner", "==", uid)
@@ -159,7 +152,7 @@ def delete_directory(dir_id):
 
     dir_path = dir_data["path"]
 
-    # Critical rule: block deletion of non-empty directories
+    # block deletion of non-empty directories
     if (
         db.collection("directories")
         .where("owner", "==", uid)
@@ -182,9 +175,7 @@ def delete_directory(dir_id):
     return jsonify({"status": "deleted"})
 
 
-# ---------------------------------------------------------------------------
 # Files
-# ---------------------------------------------------------------------------
 
 @app.route("/api/files", methods=["GET"])
 def list_files():
@@ -222,6 +213,10 @@ def upload_file():
     if not filename:
         return jsonify({"error": "Filename is missing"}), 400
 
+    file_bytes = uploaded.read()
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    size = len(file_bytes)
+
     # Check if a file with this name already exists in the directory
     existing = (
         db.collection("files")
@@ -232,19 +227,36 @@ def upload_file():
         .get()
     )
 
-    # Critical rule: ask before overwriting
+    # ask before overwriting
     if existing and not overwrite:
         return jsonify({"error": "File already exists", "exists": True}), 409
+
+    # Cross-directory hash duplicate detection
+    duplicate_confirmed = request.form.get("duplicate_confirmed", "false").lower() == "true"
+    if not overwrite and not duplicate_confirmed:
+        hash_match = (
+            db.collection("files")
+            .where("owner", "==", uid)
+            .where("hash", "==", file_hash)
+            .limit(1)
+            .get()
+        )
+        if hash_match:
+            dupe = hash_match[0].to_dict()
+            return jsonify({
+                "error": "Identical file already exists",
+                "duplicate": True,
+                "existing_path": dupe["directory_path"],
+                "existing_name": dupe["name"],
+            }), 409
 
     # Build GCS object path: uid/path/to/dir/filename
     dir_suffix = directory_path.strip("/")
     gcs_path = f"{uid}/{dir_suffix}/{filename}" if dir_suffix else f"{uid}/{filename}"
 
-    file_data = uploaded.read()
-    size = len(file_data)
     blob = bucket.blob(gcs_path)
     blob.upload_from_string(
-        file_data,
+        file_bytes,
         content_type=uploaded.content_type or "application/octet-stream",
     )
 
@@ -252,6 +264,7 @@ def upload_file():
         existing[0].reference.update({
             "gcs_path": gcs_path,
             "size": size,
+            "hash": file_hash,
             "updated_at": fs.SERVER_TIMESTAMP,
         })
     else:
@@ -261,6 +274,7 @@ def upload_file():
             "directory_path": directory_path,
             "gcs_path": gcs_path,
             "size": size,
+            "hash": file_hash,
             "created_at": fs.SERVER_TIMESTAMP,
         })
 
@@ -302,7 +316,7 @@ def download_file(file_id):
         return jsonify({"error": "File not found"}), 404
 
     file_data = file_doc.to_dict()
-    if file_data["owner"] != uid:
+    if file_data["owner"] != uid and uid not in file_data.get("shared_with", []):
         return jsonify({"error": "Forbidden"}), 403
 
     file_bytes = bucket.blob(file_data["gcs_path"]).download_as_bytes()
@@ -311,6 +325,59 @@ def download_file(file_id):
         download_name=file_data["name"],
         as_attachment=True,
     )
+
+# File sharing
+
+@app.route("/api/files/<file_id>/share", methods=["POST"])
+def share_file(file_id):
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    target_email = data.get("email", "").strip().lower()
+    if not target_email:
+        return jsonify({"error": "Email is required"}), 400
+
+    file_ref = db.collection("files").document(file_id)
+    file_doc = file_ref.get()
+    if not file_doc.exists:
+        return jsonify({"error": "File not found"}), 404
+    if file_doc.to_dict()["owner"] != uid:
+        return jsonify({"error": "Forbidden"}), 403
+
+    target_users = db.collection("users").where("email", "==", target_email).limit(1).get()
+    if not target_users:
+        return jsonify({"error": "No account found for that email"}), 404
+
+    target_uid = target_users[0].to_dict()["uid"]
+    if target_uid == uid:
+        return jsonify({"error": "Cannot share with yourself"}), 400
+
+    file_ref.update({"shared_with": ArrayUnion([target_uid])})
+    return jsonify({"status": "shared"})
+
+
+@app.route("/api/shared", methods=["GET"])
+def list_shared_files():
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    docs = (
+        db.collection("files")
+        .where("shared_with", "array_contains", uid)
+        .stream()
+    )
+    return jsonify([
+        {
+            "id": d.id,
+            "name": d.to_dict()["name"],
+            "size": d.to_dict().get("size", 0),
+            "directory_path": d.to_dict()["directory_path"],
+        }
+        for d in docs
+    ])
 
 
 if __name__ == "__main__":
