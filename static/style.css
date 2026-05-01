@@ -177,7 +177,7 @@ main {
     font-size: 0.95rem;
 }
 
-/* ── Buttons ── */
+/* Buttons */
 button {
     padding: 0.6rem 1.2rem;
     border: none;
@@ -261,5 +261,48 @@ button:disabled {
     font-size: 1rem;
     color: #555;
     margin: 2rem 0 0.75rem;
+    font-weight: 600;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    main {
+        padding: 0 0.5rem;
+    }
+
+    .create-form,
+    .upload-form {
+        flex-direction: column;
+    }
+
+    .dir-row {
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+}
+
+/* Duplicate highlighting */
+.duplicate {
+    background: #fff8e1;
+    border-left: 3px solid #ffc107;
+}
+
+.duplicate:hover {
+    background: #fff3cd;
+}
+
+.dup-group {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.dup-group-header {
+    padding: 0.5rem 1rem;
+    background: #fff3cd;
+    font-size: 0.85rem;
+    color: #856404;
     font-weight: 600;
 }

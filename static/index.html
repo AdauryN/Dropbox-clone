@@ -48,6 +48,11 @@
                 <h3 class="shared-heading">Shared with me</h3>
                 <div id="shared-list" class="dir-list"></div>
             </div>
+
+            <div id="duplicates-section" hidden>
+                <h3 class="shared-heading">Duplicate files</h3>
+                <div id="duplicates-list"></div>
+            </div>
         </main>
     </div>
 
@@ -80,6 +85,7 @@
             await notifyBackendLogin();
             loadContent();
             loadSharedFiles();
+            loadDuplicates();
         } else {
             currentUser = null;
             loginSection.hidden = false;
@@ -191,10 +197,14 @@
             contentsEl.appendChild(row);
         });
 
+        // Build hash frequency map for duplicate highlighting
+        const hashCount = {};
+        files.forEach(f => { if (f.hash) hashCount[f.hash] = (hashCount[f.hash] || 0) + 1; });
+
         // Files
         files.forEach(file => {
             const row = document.createElement('div');
-            row.className = 'dir-row';
+            row.className = file.hash && hashCount[file.hash] > 1 ? 'dir-row duplicate' : 'dir-row';
 
             const icon = document.createElement('span');
             icon.className = 'dir-icon';
@@ -306,6 +316,7 @@
             document.getElementById('file-input').value = '';
             showMsg(`"${file.name}" uploaded successfully`, 'success');
             loadContent();
+            loadDuplicates();
         } else if (res.status === 409 && data.exists) {
             // Critical rule: confirm before overwriting
             if (confirm(`"${file.name}" already exists here. Overwrite it?`)) {
@@ -334,6 +345,7 @@
         if (ok) {
             showMsg(`"${fileName}" deleted`, 'success');
             loadContent();
+            loadDuplicates();
         } else {
             showMsg(data.error || 'Failed to delete file', 'error');
         }
@@ -424,6 +436,66 @@
             row.appendChild(size);
             row.appendChild(dlBtn);
             sharedList.appendChild(row);
+        });
+    }
+
+    // ── Duplicate files view ───────────────────────────────────────────────
+    async function loadDuplicates() {
+        const { ok, data } = await apiFetch('/api/duplicates');
+        const section = document.getElementById('duplicates-section');
+        const list = document.getElementById('duplicates-list');
+
+        if (!ok || data.length === 0) {
+            section.hidden = true;
+            return;
+        }
+
+        section.hidden = false;
+        list.innerHTML = '';
+
+        data.forEach(group => {
+            const card = document.createElement('div');
+            card.className = 'dup-group';
+
+            const header = document.createElement('div');
+            header.className = 'dup-group-header';
+            header.textContent = `${group.length} identical files`;
+            card.appendChild(header);
+
+            group.forEach(file => {
+                const row = document.createElement('div');
+                row.className = 'dir-row';
+
+                const icon = document.createElement('span');
+                icon.className = 'dir-icon';
+                icon.textContent = '[FILE]';
+
+                const name = document.createElement('span');
+                name.className = 'dir-name';
+                name.textContent = file.name;
+
+                const loc = document.createElement('span');
+                loc.className = 'file-size';
+                loc.textContent = file.directory_path;
+
+                const size = document.createElement('span');
+                size.className = 'file-size';
+                size.textContent = formatSize(file.size);
+
+                const dlBtn = document.createElement('button');
+                dlBtn.className = 'download-btn';
+                dlBtn.textContent = 'Download';
+                dlBtn.addEventListener('click', () => downloadFile(file.id, file.name));
+
+                row.appendChild(icon);
+                row.appendChild(name);
+                row.appendChild(loc);
+                row.appendChild(size);
+                row.appendChild(dlBtn);
+                card.appendChild(row);
+            });
+
+            list.appendChild(card);
         });
     }
 

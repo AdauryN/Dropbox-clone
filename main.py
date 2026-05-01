@@ -9,7 +9,6 @@ from firebase_admin import credentials, auth, firestore as fs
 from google.cloud import storage as gcs
 from google.cloud.firestore import ArrayUnion
 
-# local-constants.py uses a hyphen so standard import won't work
 _spec = importlib.util.spec_from_file_location(
     "local_constants",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "local-constants.py"),
@@ -39,7 +38,6 @@ def _require_uid():
         return uid, None
     except Exception:
         return None, (jsonify({"error": "Invalid token"}), 401)
-
 
 # Static entry point
 
@@ -191,7 +189,12 @@ def list_files():
         .stream()
     )
     return jsonify([
-        {"id": d.id, "name": d.to_dict()["name"], "size": d.to_dict().get("size", 0)}
+        {
+            "id": d.id,
+            "name": d.to_dict()["name"],
+            "size": d.to_dict().get("size", 0),
+            "hash": d.to_dict().get("hash", ""),
+        }
         for d in docs
     ])
 
@@ -325,6 +328,32 @@ def download_file(file_id):
         download_name=file_data["name"],
         as_attachment=True,
     )
+
+
+# Duplicate detection view
+
+@app.route("/api/duplicates", methods=["GET"])
+def list_duplicates():
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    docs = db.collection("files").where("owner", "==", uid).stream()
+    groups = {}
+    for d in docs:
+        data = d.to_dict()
+        h = data.get("hash")
+        if not h:
+            continue
+        groups.setdefault(h, []).append({
+            "id": d.id,
+            "name": data["name"],
+            "directory_path": data["directory_path"],
+            "size": data.get("size", 0),
+        })
+
+    return jsonify([files for files in groups.values() if len(files) > 1])
+
 
 # File sharing
 
